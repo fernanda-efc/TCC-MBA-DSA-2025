@@ -1,0 +1,548 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Jan 14 07:45:54 2025
+
+@author: Fernanda
+"""
+
+#Trabalho de Conclusão de Curso
+#MBA Data Science e Analytics - USP ESALQ
+#Análise de Correspondência Múltipla
+
+#Acesso à internet por computadores e seu impacto na ocupação e renda da população: uma abordagem Anacor
+
+#%%Instala os pacotes necessários para a análise
+
+! pip install pandas
+! pip install numpy
+! pip install scipy
+! pip install plotly
+! pip install seaborn
+! pip install matplotlib
+! pip install statsmodels
+! pip install prince
+! pip install adjustText
+! pip install xlsxwriter
+
+#%%Importa os pacotes instalados
+
+import pandas as pd
+import numpy as np
+from scipy.stats import chi2_contingency
+import statsmodels.api as sm
+import seaborn as sns
+import matplotlib.pyplot as plt
+import prince
+import plotly.io as pio
+pio.renderers.default = 'browser'
+import plotly.graph_objects as go
+from adjustText import adjust_text
+import matplotlib.ticker as mtick
+import matplotlib as mpl
+
+#%% Seção 1: Verifica se há associação significativa entre as variáveis escolhidas,
+#com uma significância de 5%, a partir do teste qui²
+
+#%% 1.1 - Importa o banco de dados no projeto
+#Fonte dos dados: Pesquisa TIC Domicílios 2024, recorte de Indivíduos
+#Acesso disponível em: <https://cetic.br/pt/arquivos/domicilios/2024/individuos/>
+
+acesso_mca = pd.read_csv("tic_domicilios_2024_individuos_base_de_microdados_v1.0.csv", sep=';')
+
+#%% 1.2 - Seleciona apenas as variáveis que farão parte da análise
+#Foram selecionadas 3 variáveis que serão utilizadas na ACM:
+    # C5_DISPOSITIVOS = Dispositivo utilizado pelos usuários de Internet
+    # TIPO_OCUP = Tipo da ocupação
+    # RENDA_PESSOAL = Renda pessoal por faixas de valores
+    
+#E uma variável adicional que será utilizada para recortes específicos
+    # COD_REGIAO_2 = região do Brasil
+    
+dados_mca = acesso_mca[acesso_mca['PEA']!=5]
+dados_mca = dados_mca[dados_mca['C5_DISPOSITIVOS'] != 99]
+dados_mca = dados_mca[['C5_DISPOSITIVOS','TIPO_OCUP','RENDA_PESSOAL','COD_REGIAO_2']]
+dados_mca.columns = dados_mca.columns.str.replace("_", "-")
+#%% 1.3 - Retoma os rótulos de dados codificados na pesquisa TIC Domicílios
+    #C5-DISPOSITIVOS
+    
+value_labels_dispositivos = {
+    1: "Apenas computador",
+    2: "Apenas telefone celular",
+    3: "Ambos",
+    4: "Nenhum desses dispositivos",
+}
+
+dados_mca['C5-DISPOSITIVOS'] = dados_mca['C5-DISPOSITIVOS'].replace(value_labels_dispositivos)
+
+    #TIPO-OCUP
+
+value_labels_ocupacao = {
+    1: "Formal",
+    2: "Informal",
+    4: "Não se aplica",
+}
+
+dados_mca['TIPO-OCUP'] = dados_mca['TIPO-OCUP'].replace(value_labels_ocupacao)
+
+    #RENDA-PESSOAL
+
+value_labels_renda = {
+    1 : "Até 1 SM",
+    2 : "Mais de 1 SM até 2 SM",
+    3 : "Mais de 2 SM até 3 SM",
+    4 : "Mais de 3 SM até 5 SM",
+    5 : "Mais de 5 SM até 10 SM",
+    6 : "Mais de 10 SM",
+    7 : "Mais de 10 SM",
+    8 : "Mais de 10 SM",
+    9 : "Não tem renda",
+    97 : "Não sabe",
+    98 : "Não respondeu"
+}
+
+dados_mca['RENDA-PESSOAL'] = dados_mca['RENDA-PESSOAL'].replace(value_labels_renda)
+
+    #COD-REGIAO-2
+
+value_labels_regiao = {
+    1 : "Sudeste",
+    2 : "Nordeste",
+    3 : "Sul",
+    4 : "Norte",
+    5 : "Centro-Oeste"}
+
+dados_mca['COD-REGIAO-2'] = dados_mca['COD-REGIAO-2'].replace(value_labels_regiao)
+
+#%% 1.4 - Análise exploratória inicial com variáveis selecionadas
+
+#%% Tipo de Dispositivo
+# Frequência e percentual da variável C5-DISPOSITIVOS por região
+dispositivos_freq = dados_mca.groupby(['COD-REGIAO-2', 'C5-DISPOSITIVOS']).size().reset_index(name='frequencia')
+dispositivos_freq['percentual'] = dispositivos_freq.groupby('COD-REGIAO-2')['frequencia'].transform(lambda x: 100 * x / x.sum())
+
+# Calcula também a distribuição percentual total (Brasil)
+dispositivos_brasil = dados_mca['C5-DISPOSITIVOS'].value_counts(normalize=True) * 100
+dispositivos_brasil = dispositivos_brasil.reset_index()
+dispositivos_brasil.columns = ['C5-DISPOSITIVOS', 'percentual']
+dispositivos_brasil['COD-REGIAO-2'] = 'Brasil'
+
+# Concatena com o dataframe de regiões
+dispositivos_freq_total = pd.concat([dispositivos_freq, dispositivos_brasil], ignore_index=True)
+
+# Tabela cruzada com Brasil incluso
+dispositivos_pivot = dispositivos_freq_total.pivot(index='COD-REGIAO-2', columns='C5-DISPOSITIVOS', values='percentual').fillna(0)
+ordem_dispositivos = ["Ambos", "Apenas telefone celular", "Apenas computador", "Nenhum desses dispositivos"]
+dispositivos_pivot = dispositivos_pivot[ordem_dispositivos]
+
+# 🚨 NOVA ORDEM DO EIXO Y
+ordem_regioes = ['Centro-Oeste', 'Sul', 'Sudeste','Nordeste', 'Norte', 'Brasil' ]
+dispositivos_pivot = dispositivos_pivot.reindex(ordem_regioes)
+
+# Tons neutros ajustados (legíveis com texto preto)
+cores_dispositivos = {
+    "Ambos": "#7a7a7a",                   # cinza médio
+    "Apenas telefone celular": "#b3b3b3", # cinza claro
+    "Apenas computador": "#d9d9d9",       # cinza bem claro
+    "Nenhum desses dispositivos": "#f0f0f0"  # quase branco (mas visível)
+}
+
+# Configurações globais
+mpl.rcParams['font.family'] = 'Arial'
+mpl.rcParams['font.size'] = 15
+
+# Criação do gráfico
+fig, ax = plt.subplots(figsize=(12, 7))
+
+barras = dispositivos_pivot.plot(kind='barh',
+                                 stacked=True,
+                                 ax=ax,
+                                 color=[cores_dispositivos[col] for col in dispositivos_pivot.columns],
+                                 edgecolor='none')  # sem bordas
+
+# Remove gridlines e bordas externas
+ax.grid(False)
+for spine in ax.spines.values():
+    spine.set_visible(False)
+
+# Adiciona linha do eixo X com espessura de 1.5 pt
+ax.axhline(y=-0.5, color='black', linewidth=1.5)
+
+# Eixos e título com fonte ajustada
+ax.set_xlabel('Percentual (%)', labelpad=10, fontsize=15)
+ax.set_ylabel('Região do Brasil', labelpad=10, fontsize=15)
+ax.xaxis.set_major_formatter(mtick.FormatStrFormatter('%.0f%%'))
+
+# Legenda sem borda e com tamanho maior
+legenda = ax.legend(title='Tipo de dispositivo',
+                    bbox_to_anchor=(1.02, 1),
+                    loc='upper left',
+                    borderaxespad=0,
+                    frameon=False)
+legenda.get_title().set_fontsize(15)
+for text in legenda.get_texts():
+    text.set_fontsize(15)
+
+# Rótulos de dados com 1 casa decimal
+for i, patch_group in enumerate(barras.containers):
+    for patch in patch_group:
+        largura = patch.get_width()
+        if largura > 3:
+            x = patch.get_x() + largura / 2
+            y = patch.get_y() + patch.get_height() / 2
+            ax.text(x, y, f'{largura:.0f}%', ha='center', va='center', fontsize=13, color='black')
+
+plt.tight_layout()
+plt.show()
+
+#%% Tipo de Ocupação
+# Frequência e percentual da variável TIPO-OCUP por região
+ocup_freq = dados_mca.groupby(['COD-REGIAO-2', 'TIPO-OCUP']).size().reset_index(name='frequencia')
+ocup_freq['percentual'] = ocup_freq.groupby('COD-REGIAO-2')['frequencia'].transform(lambda x: 100 * x / x.sum())
+
+# Calcula também a distribuição percentual total (Brasil)
+ocup_brasil = dados_mca['TIPO-OCUP'].value_counts(normalize=True) * 100
+ocup_brasil = ocup_brasil.reset_index()
+ocup_brasil.columns = ['TIPO-OCUP', 'percentual']
+ocup_brasil['COD-REGIAO-2'] = 'Brasil'
+
+# Concatena com o dataframe de regiões
+ocup_freq_total = pd.concat([ocup_freq, ocup_brasil], ignore_index=True)
+
+# Tabela cruzada com Brasil incluso
+ocup_pivot = ocup_freq_total.pivot(index='COD-REGIAO-2', columns='TIPO-OCUP', values='percentual').fillna(0)
+ordem_ocup = ["Formal", "Informal", "Não se aplica"]
+ocup_pivot = ocup_pivot[ordem_ocup]
+
+# 🚨 ORDEM DO EIXO Y
+ordem_regioes = ['Centro-Oeste', 'Sul', 'Sudeste', 'Nordeste', 'Norte', 'Brasil']
+ocup_pivot = ocup_pivot.reindex(ordem_regioes)
+
+# Tons neutros ajustados
+cores_ocup = {
+    "Formal": "#7a7a7a",         # cinza médio
+    "Informal": "#b3b3b3",       # cinza claro
+    "Não se aplica": "#d9d9d9"   # cinza bem claro
+}
+
+# Configurações globais
+mpl.rcParams['font.family'] = 'Arial'
+mpl.rcParams['font.size'] = 15
+
+# Criação do gráfico
+fig, ax = plt.subplots(figsize=(12, 7))
+
+barras = ocup_pivot.plot(kind='barh',
+                         stacked=True,
+                         ax=ax,
+                         color=[cores_ocup[col] for col in ocup_pivot.columns],
+                         edgecolor='none')  # sem bordas
+
+# Remove gridlines e bordas externas
+ax.grid(False)
+for spine in ax.spines.values():
+    spine.set_visible(False)
+
+# Linha do eixo X com espessura de 1.5 pt
+ax.axhline(y=-0.5, color='black', linewidth=1.5)
+
+# Eixos e título
+ax.set_xlabel('Percentual (%)', labelpad=10, fontsize=15)
+ax.set_ylabel('Região do Brasil', labelpad=10, fontsize=15)
+ax.xaxis.set_major_formatter(mtick.FormatStrFormatter('%.0f%%'))
+
+# Legenda
+legenda = ax.legend(title='Tipo de ocupação',
+                    bbox_to_anchor=(1.02, 1),
+                    loc='upper left',
+                    borderaxespad=0,
+                    frameon=False)
+legenda.get_title().set_fontsize(15)
+for text in legenda.get_texts():
+    text.set_fontsize(15)
+
+# Rótulos de dados com 0 casas decimais
+for i, patch_group in enumerate(barras.containers):
+    for patch in patch_group:
+        largura = patch.get_width()
+        if largura > 3:
+            x = patch.get_x() + largura / 2
+            y = patch.get_y() + patch.get_height() / 2
+            ax.text(x, y, f'{largura:.0f}%', ha='center', va='center', fontsize=13, color='black')
+
+plt.tight_layout()
+plt.show()
+
+#%% Renda Pessoal
+
+# Filtra apenas faixas válidas
+faixas_validas = [
+    "Até 1 SM", "Mais de 1 SM até 2 SM", "Mais de 2 SM até 3 SM",
+    "Mais de 3 SM até 5 SM", "Mais de 5 SM até 10 SM", "Mais de 10 SM", "Não tem renda"
+]
+dados_renda = dados_mca[dados_mca['RENDA-PESSOAL'].isin(faixas_validas)]
+
+# Frequência e percentual da variável RENDA-PESSOAL por região
+renda_freq = dados_renda.groupby(['COD-REGIAO-2', 'RENDA-PESSOAL']).size().reset_index(name='frequencia')
+renda_freq['percentual'] = renda_freq.groupby('COD-REGIAO-2')['frequencia'].transform(lambda x: 100 * x / x.sum())
+
+# Distribuição percentual total (Brasil)
+renda_brasil = dados_renda['RENDA-PESSOAL'].value_counts(normalize=True) * 100
+renda_brasil = renda_brasil.reset_index()
+renda_brasil.columns = ['RENDA-PESSOAL', 'percentual']
+renda_brasil['COD-REGIAO-2'] = 'Brasil'
+
+# Concatena com o dataframe de regiões
+renda_freq_total = pd.concat([renda_freq, renda_brasil], ignore_index=True)
+
+# Tabela cruzada com Brasil incluso
+ordem_renda = [
+    "Não tem renda", "Até 1 SM", "Mais de 1 SM até 2 SM", "Mais de 2 SM até 3 SM",
+    "Mais de 3 SM até 5 SM", "Mais de 5 SM até 10 SM", "Mais de 10 SM"
+]
+renda_pivot = renda_freq_total.pivot(index='COD-REGIAO-2', columns='RENDA-PESSOAL', values='percentual').fillna(0)
+renda_pivot = renda_pivot[ordem_renda]
+
+# 🚨 ORDEM DO EIXO Y
+ordem_regioes = ['Centro-Oeste', 'Sul', 'Sudeste', 'Nordeste', 'Norte', 'Brasil']
+renda_pivot = renda_pivot.reindex(ordem_regioes)
+
+# Tons de cinza crescentes
+tons_renda = {
+    "Não tem renda": "#f0f0f0",
+    "Até 1 SM": "#d9d9d9",
+    "Mais de 1 SM até 2 SM": "#bdbdbd",
+    "Mais de 2 SM até 3 SM": "#969696",
+    "Mais de 3 SM até 5 SM": "#737373",
+    "Mais de 5 SM até 10 SM": "#525252",
+    "Mais de 10 SM": "#313131"
+}
+
+# Configurações globais
+mpl.rcParams['font.family'] = 'Arial'
+mpl.rcParams['font.size'] = 15
+
+# Criação do gráfico
+fig, ax = plt.subplots(figsize=(12, 7))
+
+barras = renda_pivot.plot(kind='barh',
+                          stacked=True,
+                          ax=ax,
+                          color=[tons_renda[col] for col in renda_pivot.columns],
+                          edgecolor='none')  # sem bordas
+
+# Remove gridlines e bordas externas
+ax.grid(False)
+for spine in ax.spines.values():
+    spine.set_visible(False)
+
+# Linha do eixo X com espessura de 1.5 pt
+ax.axhline(y=-0.5, color='black', linewidth=1.5)
+
+# Eixos e título
+ax.set_xlabel('Percentual (%)', labelpad=10, fontsize=15)
+ax.set_ylabel('Região do Brasil', labelpad=10, fontsize=15)
+ax.xaxis.set_major_formatter(mtick.FormatStrFormatter('%.0f%%'))
+
+# Legenda
+legenda = ax.legend(title='Faixa de renda pessoal',
+                    bbox_to_anchor=(1.02, 1),
+                    loc='upper left',
+                    borderaxespad=0,
+                    frameon=False)
+legenda.get_title().set_fontsize(15)
+for text in legenda.get_texts():
+    text.set_fontsize(15)
+
+# Rótulos de dados com 0 casas decimais
+for i, patch_group in enumerate(barras.containers):
+    for patch in patch_group:
+        largura = patch.get_width()
+        if largura > 3:
+            x = patch.get_x() + largura / 2
+            y = patch.get_y() + patch.get_height() / 2
+            ax.text(x, y, f'{largura:.0f}%', ha='center', va='center', fontsize=13, color='black')
+
+plt.tight_layout()
+plt.show()
+
+#%% 1.4 - Organiza as informações descritivas sobre as variáveis selecionadas
+
+print(dados_mca['C5-DISPOSITIVOS'].value_counts())
+print(dados_mca['TIPO-OCUP'].value_counts())
+print(dados_mca['RENDA-PESSOAL'].value_counts())
+
+#%% 1.5 - Analisa as tabelas de contigência para contexto Brasil
+
+dados_mca = dados_mca[['C5-DISPOSITIVOS','TIPO-OCUP','RENDA-PESSOAL']]
+tabela_mca_1 = pd.crosstab(dados_mca["C5-DISPOSITIVOS"], dados_mca["TIPO-OCUP"])
+tabela_mca_2 = pd.crosstab(dados_mca["C5-DISPOSITIVOS"], dados_mca["RENDA-PESSOAL"])
+tabela_mca_3 = pd.crosstab(dados_mca["TIPO-OCUP"], dados_mca["RENDA-PESSOAL"])
+
+print(tabela_mca_1)
+print(tabela_mca_2)
+print(tabela_mca_3)
+
+#output_file = "tabelas_mca.xlsx"
+
+# Exportando para Excel com múltiplas abas
+#with pd.ExcelWriter(output_file, engine="xlsxwriter") as writer:
+    #tabela_mca_1.to_excel(writer, sheet_name="Dispositivos x TipoOcup")
+    #tabela_mca_2.to_excel(writer, sheet_name="Dispositivos x Renda")
+    #tabela_mca_3.to_excel(writer, sheet_name="TipoOcup x Renda")
+
+
+
+#%% 1.6 - Analisa a significância estatística das associações das variáveis (teste qui²)
+
+tab_1 = chi2_contingency(tabela_mca_1)
+
+print("Associação Dispositivos x Tipo de Ocupação")
+print(f"estatística qui²: {round(tab_1[0], 2)}")
+print(f"p-valor da estatística: {round(tab_1[1], 4)}")
+print(f"graus de liberdade: {tab_1[2]}")
+
+tab_2 = chi2_contingency(tabela_mca_2)
+
+print("Associação Dispositivos x Renda Pessoal")
+print(f"estatística qui²: {round(tab_2[0], 2)}")
+print(f"p-valor da estatística: {round(tab_2[1], 4)}")
+print(f"graus de liberdade: {tab_2[2]}")
+
+tab_3 = chi2_contingency(tabela_mca_3)
+
+print("Associação Tipo de Ocupação x Renda Pessoal")
+print(f"estatística qui²: {round(tab_3[0], 2)}")
+print(f"p-valor da estatística: {round(tab_3[1], 4)}")
+print(f"graus de liberdade: {tab_3[2]}")
+
+#%% Seção 2: Elabora a MCA: Multiple Correspondence Analysis
+
+#%% 2.1 - Parametriza a MCA para duas dimensões (eixos X e Y no mapa perceptual)
+mca = prince.MCA(n_components=2).fit(dados_mca)
+
+#%% 2.2 - Calcula a quantidade de dimensões obtida na análise
+
+# Quantidade de dimensões = qtde total de categorias - qtde de variáveis
+
+# Quantidade total de categorias
+mca.J_
+
+# Quantidade de variáveis na análise
+mca.K_
+
+# Quantidade de dimensões
+quant_dim = mca.J_ - mca.K_
+
+# Resumo das informações
+print(f"quantidade total de categorias: {mca.J_}")
+print(f"quantidade de variáveis: {mca.K_}")
+print(f"quantidade de dimensões: {quant_dim}")
+
+#%% 2.3 - Obtem os eigenvalues (autovalores)
+
+tabela_autovalores = mca.eigenvalues_summary
+
+print(tabela_autovalores)
+
+#%% Obtendo as coordenadas principais das categorias das variáveis
+
+coord_burt = mca.column_coordinates(dados_mca)
+
+print(coord_burt)
+
+#%% Obtendo as coordenadas-padrão das categorias das variáveis
+
+coord_padrao = mca.column_coordinates(dados_mca)/np.sqrt(mca.eigenvalues_)
+
+print(coord_padrao)
+
+#%% Obtendo as coordenadas das observações do banco de dados
+
+# Na função, as coordenadas das observações vêm das coordenadas-padrão
+
+coord_obs = mca.row_coordinates(dados_mca)
+
+print(coord_obs)
+
+
+#%% Plotando o mapa perceptual
+
+plt.figure(figsize=(8, 6), dpi=300)
+
+# Preparar dados
+chart = coord_padrao.reset_index()
+
+# Extrair nome da variável (antes do "_") e manter a categoria como está
+var_chart = chart['index'].str.extract(r'(^[^_]+)')[0]           # nome da variável
+categoria_chart = chart['index'].str.replace(r'^[^_]+_', '', regex=True).str.strip('_ ')  # só a parte da categoria
+
+# Renomear variáveis para legenda
+nome_variaveis = {
+    'C5-DISPOSITIVOS': 'Tipo de dispositivo de acesso',
+    'TIPO-OCUP': 'Tipo de ocupação',
+    'RENDA-PESSOAL': 'Faixa de renda pessoal'
+}
+var_chart_legenda = var_chart.replace(nome_variaveis)
+
+# Construir DataFrame
+chart_df_mca = pd.DataFrame({
+    'categoria': categoria_chart,
+    'obs_x': chart[0],
+    'obs_y': chart[1],
+    'variavel': var_chart_legenda
+})
+
+# Paleta em tons de cinza
+cores_cinza = {
+    'Tipo de dispositivo de acesso': '#555555',
+    'Tipo de ocupação': '#999999',
+    'Faixa de renda pessoal': '#cccccc'
+}
+
+# Gráfico
+ax = plt.gca()
+sns.scatterplot(
+    data=chart_df_mca,
+    x='obs_x',
+    y='obs_y',
+    hue='variavel',
+    palette=cores_cinza,
+    s=20,
+    ax=ax
+)
+
+# Estética
+sns.despine(top=True, right=True, left=False, bottom=False)
+plt.tick_params(size=2, labelsize=6)
+plt.xlabel(f"Dimensão 1: {tabela_autovalores.iloc[0,1]} da inércia", fontsize=11)
+plt.ylabel(f"Dimensão 2: {tabela_autovalores.iloc[1,1]} da inércia", fontsize=11)
+
+# Legenda limpa no canto superior direito
+plt.legend(
+    title="Variável",
+    title_fontsize='9',
+    fontsize='7',
+    loc='upper right',
+    frameon=False
+)
+
+# Jitter para pontos sobrepostos
+jitter_strength = 0.01
+grouped = chart_df_mca.groupby(['obs_x', 'obs_y']).size().reset_index(name='count')
+
+for _, row in grouped[grouped['count'] > 1].iterrows():
+    mask = (chart_df_mca['obs_x'] == row['obs_x']) & (chart_df_mca['obs_y'] == row['obs_y'])
+    indices = chart_df_mca[mask].index
+    n = len(indices)
+    angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    chart_df_mca.loc[indices, 'obs_x'] += np.cos(angles) * jitter_strength
+    chart_df_mca.loc[indices, 'obs_y'] += np.sin(angles) * jitter_strength
+
+# Rótulos no gráfico
+texts = []
+for i, row in chart_df_mca.iterrows():
+    texts.append(ax.text(row['obs_x'], row['obs_y'], row['categoria'], fontsize=8))
+
+adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle="-", color='gray', lw=0.5))
+
+plt.show()
